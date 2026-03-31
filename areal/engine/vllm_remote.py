@@ -29,6 +29,7 @@ from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
 from areal.utils import logging, perf_tracer, stats_tracker
+from areal.utils.network import format_host_for_url
 
 logger = logging.getLogger("vLLMEngine")
 
@@ -185,7 +186,7 @@ class VLLMBackend:
                 ),
                 HttpRequest(
                     endpoint=update_endpoint,
-                    payload={},
+                    payload={} if not meta.use_lora else payload,
                 ),
             ]
         )
@@ -194,15 +195,14 @@ class VLLMBackend:
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
         """Build vLLM init weights group request."""
-        assert meta.alloc_mode is not None
-        rank_offset = (
-            1 + server_idx * meta.alloc_mode.gen.tp_size * meta.alloc_mode.gen.pp_size
-        )
+        assert meta.gen_allocation is not None
+        gen_parallel = meta.gen_allocation.parallel
+        rank_offset = 1 + server_idx * gen_parallel.tp_size * gen_parallel.pp_size
         payload = {
-            "master_address": meta.nccl_master_address,
+            "master_address": format_host_for_url(meta.nccl_master_address),
             "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
-            "world_size": meta.alloc_mode.gen.world_size + 1,
+            "world_size": gen_parallel.world_size + 1,
             "backend": current_platform.communication_backend,
             "group_name": meta.nccl_group_name,
         }

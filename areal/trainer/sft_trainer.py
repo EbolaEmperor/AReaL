@@ -7,7 +7,8 @@ import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api import AllocationMode, FinetuneSpec, Scheduler, StepInfo
+from areal.api import FinetuneSpec, Scheduler, StepInfo
+from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     SFTConfig,
     TrainDatasetConfig,
@@ -23,8 +24,8 @@ from areal.infra import (
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
+    collate_samples_to_list,
     cycle_dataloader,
-    pad_sequences_to_tensors,
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
@@ -67,8 +68,8 @@ class SFTTrainer:
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
-        # Parse allocation mode.
-        self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
+        # Parse per-engine allocation.
+        self.actor_alloc = ModelAllocation.from_str(config.actor.backend, name="actor")
 
         # Create models.
         self.actor = self._create_actor(config.actor)
@@ -98,14 +99,7 @@ class SFTTrainer:
         )
 
         # Initialize models
-        self.parallel_strategy = self.allocation_mode.train
-        assert self.parallel_strategy is not None
-        engine_init_kwargs = {
-            "addr": None,
-            "ft_spec": ft_spec,
-            "alloc_mode": self.allocation_mode,
-        }
-        self.actor.initialize(**engine_init_kwargs, role="actor")
+        self.actor.initialize(addr=None, ft_spec=ft_spec, role="actor")
 
         # Set up evaluation
         self.evaluator = Evaluator(config.evaluator, ft_spec)
@@ -278,34 +272,34 @@ class SFTTrainer:
             rank=rank,
             world_size=world_size,
             dataset_config=dataset_config,
-            collate_fn=pad_sequences_to_tensors,
+            collate_fn=collate_samples_to_list,
         )
 
     def _create_actor(
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | ArchonLMEngine | LMController:
-        if self.allocation_mode.train_backend == "fsdp":
+        if self.actor_alloc.backend == "fsdp":
             from areal.engine import FSDPLMEngine
 
             actor_cls = FSDPLMEngine
-        elif self.allocation_mode.train_backend == "megatron":
+        elif self.actor_alloc.backend == "megatron":
             from areal.engine import MegatronLMEngine
 
             actor_cls = MegatronLMEngine
-        elif self.allocation_mode.train_backend == "archon":
+        elif self.actor_alloc.backend == "archon":
             from areal.experimental.engine.archon_engine import ArchonLMEngine
 
             actor_cls = ArchonLMEngine
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, "
+                f"Invalid backend: {self.actor_alloc.backend}, "
                 f"expected fsdp, megatron, or archon"
             )
         if is_single_controller():
             actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
             actor = actor_cls(config=actor_config)
-        actor.create_process_group(parallel_strategy=self.allocation_mode.train)
+        actor.create_process_group(parallel_strategy=self.actor_alloc.parallel)
         return actor
 
     def _load_bcast_from(self, data_generator):
@@ -403,5 +397,4 @@ class SFTTrainer:
         if exc_type is not None:
             logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
         self.close()
-        if exc_type is not None:
-            raise exc_value
+        return False

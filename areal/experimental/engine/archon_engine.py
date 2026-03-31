@@ -603,7 +603,7 @@ class ArchonEngine(TrainEngine):
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Perform rollout using connected inference engine."""
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
@@ -621,7 +621,7 @@ class ArchonEngine(TrainEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Prepare batch from dataloader with rollout."""
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
@@ -938,6 +938,7 @@ class ArchonEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_numa_affinity(int(os.environ["LOCAL_RANK"]))
         if current_platform.device_type == "cpu":
             self.device = torch.device("cpu")
         else:
@@ -1259,11 +1260,11 @@ class ArchonPPOActor(ArchonEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> list[torch.Tensor] | None:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+    def compute_advantages(self, *args, **kwargs) -> list[dict[str, Any]]:
         return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:
@@ -1319,3 +1320,32 @@ class ArchonLMEngine(ArchonEngine):
         from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class ArchonRWEngine(ArchonEngine):
+    """Archon-based RW Engine for reward modeling."""
+
+    def __init__(self, config: TrainEngineConfig):
+        from copy import deepcopy
+
+        from areal.trainer.rw.rw_engine import RWEngine
+
+        super().__init__(config)
+        self.rw_engine = RWEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            rw_logger = logging.getLogger("RWEngine")
+            rw_logger.warning("mb_spec.granularity must be 2 for reward modeling")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_rw(self, data):
+        return self.rw_engine.train_rw(data)
+
+    def evaluate_rw(self, data):
+        return self.rw_engine.evaluate_rw(data)
+
+    @classmethod
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        from areal.trainer.rw.rw_engine import RWController
+
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)

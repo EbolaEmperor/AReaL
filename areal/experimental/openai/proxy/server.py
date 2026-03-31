@@ -5,7 +5,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-import torch
 from pydantic import BaseModel
 
 from areal.experimental.openai.cache import InteractionCache
@@ -128,16 +127,17 @@ class SessionData:
 def serialize_interactions(
     interactions: dict[str, InteractionWithTokenLogpReward],
 ) -> dict[str, Any]:
-    """Serialize interactions for HTTP transport."""
+    """Serialize interactions into a json-compatible format for HTTP transport."""
+    from areal.infra.rpc.serialization import serialize_value
+
     result = {}
     for key, interaction in interactions.items():
-        tensor_dict = interaction.to_tensor_dict()
         result[key] = {
-            "tensor_dict": {k: v.tolist() for k, v in tensor_dict.items()},
+            "tensor_dict": interaction.to_tensor_dict(),
             "reward": interaction.reward,
             "interaction_id": interaction.interaction_id,
         }
-    return result
+    return serialize_value(result)
 
 
 def deserialize_interactions(
@@ -145,14 +145,16 @@ def deserialize_interactions(
 ) -> dict[str, InteractionWithTokenLogpReward]:
     """Deserialize interactions from HTTP response."""
     from areal.experimental.openai.types import InteractionWithTokenLogpReward
+    from areal.infra.rpc.serialization import deserialize_value
 
+    data = deserialize_value(data)
     result = {}
     for key, item in data.items():
-        tensor_dict = {k: torch.tensor(v) for k, v in item["tensor_dict"].items()}
         # Create a minimal InteractionWithTokenLogpReward with cached tensor dict
         interaction = InteractionWithTokenLogpReward()
-        interaction._cache = tensor_dict
+        interaction._cache = item["tensor_dict"]
         interaction.reward = item["reward"]
+        interaction.interaction_id = item["interaction_id"]
         result[key] = interaction
     return result
 

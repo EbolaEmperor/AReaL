@@ -59,6 +59,7 @@ LOGGER_COLORS_EXACT = {
     "SyncRPCServer": "white",
     "RayRPCServer": "white",
     "RPCSerialization": "white",
+    "HttpRTensor": "white",
     # Inference wrappers - white
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",
@@ -101,6 +102,20 @@ LOGGER_COLORS_EXACT = {
     "ToolCallParser": "light_purple",
     "TokenLogpReward": "light_purple",
     "ProxyUtils": "light_purple",
+    # Agent Service - purple
+    "AgentGateway": "light_purple",
+    "AgentBridge": "light_purple",
+    "AgentRouter": "light_purple",
+    "AgentWorker": "light_purple",
+    "AgentDataProxy": "light_purple",
+    "AgentServiceController": "light_purple",
+    # Inference service - white (orchestration)
+    "GatewayInferenceController": "white",
+    "InferenceDataProxy": "white",
+    "InferenceInfBridge": "white",
+    "InferenceRouter": "white",
+    "InferenceGateway": "white",
+    "RPCGuard": "white",
 }
 
 # Prefix patterns checked in order (first match wins)

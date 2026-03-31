@@ -134,7 +134,7 @@ def load_hf_model(model_path: str, dtype: torch.dtype = torch.bfloat16):
         model_path,
         torch_dtype=dtype,
         trust_remote_code=True,
-        attn_implementation="sdpa",
+        attn_implementation="flash_attention_2",
     )
     model = model.to(current_platform.device_type)
     model.eval()
@@ -329,6 +329,7 @@ def create_engine_config(
         TrainEngineConfig configured for testing.
     """
     return TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name=f"test_{engine_type}_grpo",
         trial_name="test",
         path=model_path,

@@ -5,6 +5,9 @@
 <p align="center">
 | <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://inclusionai.github.io/AReaL/zh/"><b>中文文档</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
 <a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
+  <a href="https://gitcgr.com/inclusionAI/AReaL">
+    <img src="https://gitcgr.com/badge/inclusionAI/AReaL.svg" alt="gitcgr" />
+  </a>
 </p>
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
@@ -99,6 +102,9 @@ First, install the package:
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 pip install uv
+# Install flash-attn pre-built wheel first to avoid compiling from source
+# (pick the wheel matching your Python version; see https://github.com/mjun0812/flash-attention-prebuild-wheels/releases)
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
 uv sync --extra cuda  # installs training packages + SGLang (default inference backend)
 ```
 
@@ -266,9 +272,12 @@ cd AReaL
 
 # Install uv and sync dependencies
 pip install uv
+# Install flash-attn pre-built wheel to avoid compiling from source
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
 # Use `--extra cuda` on Linux with CUDA (installs training packages + SGLang)
 uv sync --extra cuda --group dev
-# For vLLM instead: uv sync --extra cuda-train --extra vllm --group dev
+# For vLLM instead (note: use torch2.10 flash-attn wheel):
+# uv sync --extra cuda-vllm --group dev
 # Or without CUDA support
 # uv sync --group dev
 

@@ -34,7 +34,11 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import (
+    find_free_ports,
+    format_hostport,
+    gethostip,
+)
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -182,7 +186,7 @@ def _wait_for_worker_ready(host: str, port: int, timeout: float = 60) -> bool:
     Returns:
         True if the worker is ready, False if timeout is reached.
     """
-    url = f"http://{host}:{port}/health"
+    url = f"http://{format_hostport(host, port)}/health"
     deadline = time.time() + timeout
 
     while time.time() < deadline:
@@ -431,15 +435,15 @@ def configure():
     try:
         data = request.get_json()
         if data is None:
-            return jsonify({"detail": "Invalid JSON in request body"}), 400
+            return jsonify({"error": "Invalid JSON in request body"}), 400
 
         config = data.get("config")
         if config is None:
-            return jsonify({"detail": "Missing 'config' field in request"}), 400
+            return jsonify({"error": "Missing 'config' field in request"}), 400
 
         rank = data.get("rank")
         if rank is None:
-            return jsonify({"detail": "Missing 'rank' field in request"}), 400
+            return jsonify({"error": "Missing 'rank' field in request"}), 400
 
         config = deserialize_value(config)
         config: BaseExperimentConfig
@@ -661,8 +665,7 @@ def call_engine_method():
         # Deserialize data
         raw_args = deserialize_value(raw_args)
         raw_kwargs = deserialize_value(raw_kwargs)
-
-        # Fetch remote tensors if any
+        # Fetch remote tensors
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
@@ -689,6 +692,7 @@ def call_engine_method():
                         src_rank=engine.current_data_parallel_head(),
                         group=engine.context_and_model_parallel_group,
                     )
+
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
@@ -765,7 +769,6 @@ def call_engine_method():
                 )
                 raise
 
-        # Submit to engine thread
         try:
             result = _submit_to_engine_thread(
                 f"call_{method_name}", execute_in_engine_thread
@@ -785,17 +788,7 @@ def call_engine_method():
             )
 
         # Convert all tensors to RTensors and store the tensor locally
-        layout = RTensor.extract_layout(
-            result,
-            layouts=dict(args=raw_args, kwargs=raw_kwargs),
-            node_addr=f"{_server_host}:{_server_port}",
-        )
-        if layout is not None:
-            result = RTensor.remotize(
-                result,
-                layout,
-                node_addr=f"{_server_host}:{_server_port}",
-            )
+        result = RTensor.remotize(result, node_addr=f"{_server_host}:{_server_port}")
         serialized_result = serialize_value(result)
         return jsonify({"status": "success", "result": serialized_result})
 
@@ -853,6 +846,60 @@ def retrieve_batch_data(shard_id: str):
 
     except Exception as e:
         logger.error(f"Error retrieving batch shard {shard_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/data/batch", methods=["POST"])
+def retrieve_batch_data_many():
+    """Retrieve multiple batch data shards in one request."""
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        shard_ids = payload.get("shard_ids", [])
+        if not isinstance(shard_ids, list) or not all(
+            isinstance(shard_id, str) for shard_id in shard_ids
+        ):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "Expected JSON body with string list field 'shard_ids'",
+                    }
+                ),
+                400,
+            )
+
+        data = []
+        missing_shard_ids = []
+        for shard_id in shard_ids:
+            try:
+                data.append(rtensor.fetch(shard_id))
+            except KeyError:
+                missing_shard_ids.append(shard_id)
+
+        if missing_shard_ids:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "One or more requested shards were not found",
+                        "missing_shard_ids": missing_shard_ids,
+                    }
+                ),
+                400,
+            )
+
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
+        logger.debug(
+            "Retrieved %s batch shards (size=%s bytes)",
+            len(shard_ids),
+            len(data_bytes),
+        )
+        return Response(data_bytes, mimetype="application/octet-stream")
+
+    except Exception as e:
+        logger.error(f"Error retrieving batch shards: {e}\n{traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -992,9 +1039,16 @@ def main():
         _nfs_record_root, \
         _etcd3_addr, \
         _fileroot
-    _server_host = args.host
-    if _server_host == "0.0.0.0":
+    bind_host = args.host
+    if bind_host == "0.0.0.0":
+        host_ip = gethostip()
+        if ":" in host_ip:
+            bind_host = "::"
+        _server_host = host_ip
+    elif bind_host == "::":
         _server_host = gethostip()
+    else:
+        _server_host = bind_host
     _role = args.role
 
     # Set global config for fork endpoint
@@ -1016,7 +1070,7 @@ def main():
     worker_id = f"{worker_role}/{worker_index}"
 
     # Make a flask server
-    server = make_server(args.host, args.port, app, threaded=True)
+    server = make_server(bind_host, args.port, app, threaded=True)
     _server_port = server.socket.getsockname()[1]
 
     name_resolve.reconfigure(
@@ -1029,7 +1083,7 @@ def main():
     key = names.worker_discovery(
         args.experiment_name, args.trial_name, args.role, worker_index
     )
-    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+    name_resolve.add(key, format_hostport(_server_host, _server_port), replace=True)
 
     global _allocated_ports
     _allocated_ports.add(_server_port)
