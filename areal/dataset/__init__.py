@@ -15,6 +15,7 @@ VALID_DATASETS = [
     "virl39k",
     "hh-rlhf",
     "torl_data",
+    "matlab_ai_detect",
 ]
 
 logger = logging.getLogger("Dataset")
@@ -113,6 +114,16 @@ def _get_custom_dataset(
         from .torl_data import get_torl_data_rl_dataset
 
         return get_torl_data_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif ("matlab_ai_detect" in path or "matlab-ai-detect" in path) and type == "rl":
+        from .matlab_ai_detect import get_matlab_ai_detect_rl_dataset
+
+        return get_matlab_ai_detect_rl_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
