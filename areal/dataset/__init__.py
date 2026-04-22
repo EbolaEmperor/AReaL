@@ -16,6 +16,7 @@ VALID_DATASETS = [
     "hh-rlhf",
     "torl_data",
     "matlab_ai_detect",
+    "hate_recognition",
 ]
 
 logger = logging.getLogger("Dataset")
@@ -124,6 +125,34 @@ def _get_custom_dataset(
         from .matlab_ai_detect import get_matlab_ai_detect_rl_dataset
 
         return get_matlab_ai_detect_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif (
+        "hate_recognition" in path
+        or "hate-recognition" in path
+        or "hate_recogonization" in path
+    ) and type == "rl":
+        from .hate_recognition import get_hate_recognition_rl_dataset
+
+        return get_hate_recognition_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif (
+        "hate_recognition" in path
+        or "hate-recognition" in path
+        or "hate_recogonization" in path
+    ) and type == "sft":
+        from .hate_recognition import get_hate_recognition_sft_dataset
+
+        return get_hate_recognition_sft_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
